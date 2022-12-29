@@ -252,6 +252,7 @@ export interface FuturesExchangeInfo {
 
 export interface FuturesOrderBook {
   lastUpdateId: number;
+  symbol?: string; // only avaiable in coin-m futures
   E: number;
   T: number;
   bids: OrderBookRow[];

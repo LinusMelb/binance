@@ -5,14 +5,55 @@ import {
   CoinMPositionTrade,
   CoinMSymbolOrderBookTicker,
   PositionRisk,
-  SymbolOrPair
+  SymbolOrPair,
 } from './types/coin';
-import { BinanceBaseUrlKey } from './types/shared';
+import {
+  CancelAllOpenOrdersResult,
+  CancelFuturesOrderResult,
+  CancelMultipleOrdersParams,
+  CancelOrdersTimeoutParams,
+  ForceOrderResult,
+  FuturesAccountBalance,
+  FuturesAccountInformation,
+  FuturesOrderBook,
+  GetForceOrdersParams,
+  GetIncomeHistoryParams,
+  GetPositionMarginChangeHistoryParams,
+  IncomeHistory,
+  ModeChangeResult,
+  NewFuturesOrderParams,
+  NewOrderError,
+  NewOrderResult,
+  OrderResult,
+  RebateDataOverview,
+  SetCancelTimeoutResult,
+  SetIsolatedMarginParams,
+  SetIsolatedMarginResult,
+  SetLeverageParams,
+  SetLeverageResult,
+  SetMarginTypeParams,
+  SymbolLeverageBracketsResult,
+} from './types/futures';
+import {
+  BasicSymbolParam,
+  BinanceBaseUrlKey,
+  CancelOCOParams,
+  CancelOrderParams,
+  GenericCodeMsgError,
+  GetAllOrdersParams,
+  GetOrderParams,
+  NewOCOParams,
+  OrderBookParams,
+  OrderIdProperty,
+} from './types/shared';
 import BaseRestClient from './util/BaseRestClient';
 import {
   asArray,
+  generateNewOrderId,
+  getOrderIdPrefix,
   getServerTimeEndpoint,
-  RestClientOptions
+  logInvalidOrderId,
+  RestClientOptions,
 } from './util/requestUtils';
 
 export class CoinMClient extends BaseRestClient {
@@ -58,6 +99,9 @@ export class CoinMClient extends BaseRestClient {
   //TODO - https://binance-docs.github.io/apidocs/delivery/en/#check-server-time
   //TODO - https://binance-docs.github.io/apidocs/delivery/en/#exchange-information
   //TODO - https://binance-docs.github.io/apidocs/delivery/en/#order-book
+  getOrderBook(params: OrderBookParams): Promise<FuturesOrderBook> {
+    return this.get('dapi/v1/depth', params);
+  }
   //TODO - https://binance-docs.github.io/apidocs/delivery/en/#recent-trades-list
   //TODO - https://binance-docs.github.io/apidocs/delivery/en/#old-trades-lookup-market_data
   //TODO - https://binance-docs.github.io/apidocs/delivery/en/#compressed-aggregate-trades-list
@@ -142,6 +186,157 @@ export class CoinMClient extends BaseRestClient {
     params: CoinMAccountTradeParams
   ): Promise<CoinMPositionTrade[]> {
     return this.getPrivate('dapi/v1/userTrades', params);
+  }
+
+  /**
+   *
+   * COIN-M-Futures Account/Trade Endpoints
+   *
+   **/
+  submitNewOrder(
+    params: NewFuturesOrderParams
+  ): Promise<NewOrderResult | NewOrderError> {
+    this.validateOrderId(params, 'newClientOrderId');
+    return this.postPrivate('dapi/v1/order', params);
+  }
+
+  /**
+   * Warning: max 5 orders at a time! This method does not throw, instead it returns individual errors in the response array if any orders were rejected.
+   *
+   * Known issue: `quantity` and `price` should be sent as strings
+   */
+  submitMultipleOrders(
+    orders: NewFuturesOrderParams<string>[]
+  ): Promise<(NewOrderResult | NewOrderError)[]> {
+    const stringOrders = orders.map((order) => {
+      const orderToStringify = { ...order };
+      this.validateOrderId(orderToStringify, 'newClientOrderId');
+      return JSON.stringify(orderToStringify);
+    });
+    const requestBody = {
+      batchOrders: `[${stringOrders.join(',')}]`,
+    };
+    return this.postPrivate('dapi/v1/batchOrders', requestBody);
+  }
+
+  getOrder(params: GetOrderParams): Promise<OrderResult> {
+    return this.getPrivate('dapi/v1/order', params);
+  }
+
+  cancelOrder(params: CancelOrderParams): Promise<CancelFuturesOrderResult> {
+    return this.deletePrivate('dapi/v1/order', params);
+  }
+
+  cancelAllOpenOrders(
+    params: BasicSymbolParam
+  ): Promise<CancelAllOpenOrdersResult> {
+    return this.deletePrivate('dapi/v1/allOpenOrders', params);
+  }
+
+  cancelMultipleOrders(
+    params: CancelMultipleOrdersParams
+  ): Promise<(CancelFuturesOrderResult | GenericCodeMsgError)[]> {
+    return this.deletePrivate('dapi/v1/batchOrders', params);
+  }
+
+  // Auto-cancel all open orders
+  setCancelOrdersOnTimeout(
+    params: CancelOrdersTimeoutParams
+  ): Promise<SetCancelTimeoutResult> {
+    return this.postPrivate('dapi/v1/countdownCancelAll', params);
+  }
+
+  getCurrentOpenOrder(params: GetOrderParams): Promise<OrderResult> {
+    return this.getPrivate('dapi/v1/openOrder', params);
+  }
+
+  getAllOpenOrders(params?: Partial<BasicSymbolParam>): Promise<OrderResult[]> {
+    return this.getPrivate('dapi/v1/openOrders', params);
+  }
+
+  getAllOrders(params: GetAllOrdersParams): Promise<OrderResult[]> {
+    return this.getPrivate('dapi/v1/allOrders', params);
+  }
+
+  getBalance(): Promise<FuturesAccountBalance[]> {
+    return this.getPrivate('dapi/v2/balance');
+  }
+
+  getAccountInformation(): Promise<FuturesAccountInformation> {
+    return this.getPrivate('dapi/v2/account');
+  }
+
+  setLeverage(params: SetLeverageParams): Promise<SetLeverageResult> {
+    return this.postPrivate('dapi/v1/leverage', params);
+  }
+
+  setMarginType(params: SetMarginTypeParams): Promise<ModeChangeResult> {
+    return this.postPrivate('dapi/v1/marginType', params);
+  }
+
+  setIsolatedPositionMargin(
+    params: SetIsolatedMarginParams
+  ): Promise<SetIsolatedMarginResult> {
+    return this.postPrivate('dapi/v1/positionMargin', params);
+  }
+
+  getPositionMarginChangeHistory(
+    params: GetPositionMarginChangeHistoryParams
+  ): Promise<any> {
+    return this.getPrivate('dapi/v1/positionMargin/history', params);
+  }
+
+  getIncomeHistory(params?: GetIncomeHistoryParams): Promise<IncomeHistory[]> {
+    return this.getPrivate('dapi/v1/income', params);
+  }
+
+  getNotionalAndLeverageBrackets(
+    params?: Partial<BasicSymbolParam>
+  ): Promise<SymbolLeverageBracketsResult[] | SymbolLeverageBracketsResult> {
+    return this.getPrivate('dapi/v1/leverageBracket', params);
+  }
+
+  getADLQuantileEstimation(params?: Partial<BasicSymbolParam>): Promise<any> {
+    return this.getPrivate('dapi/v1/adlQuantile', params);
+  }
+
+  getForceOrders(params?: GetForceOrdersParams): Promise<ForceOrderResult[]> {
+    return this.getPrivate('dapi/v1/forceOrders', params);
+  }
+
+  getApiQuantitativeRulesIndicators(
+    params?: Partial<BasicSymbolParam>
+  ): Promise<any> {
+    return this.getPrivate('dapi/v1/apiTradingStatus', params);
+  }
+
+  getAccountComissionRate(
+    params: BasicSymbolParam
+  ): Promise<RebateDataOverview> {
+    return this.getPrivate('dapi/v1/commissionRate', params);
+  }
+
+  /**
+   * Validate syntax meets requirements set by binance. Log warning if not.
+   */
+  private validateOrderId(
+    params:
+      | NewFuturesOrderParams
+      | CancelOrderParams
+      | NewOCOParams
+      | CancelOCOParams,
+    orderIdProperty: OrderIdProperty
+  ): void {
+    const apiCategory = this.clientId;
+    if (!params[orderIdProperty]) {
+      params[orderIdProperty] = generateNewOrderId(apiCategory);
+      return;
+    }
+
+    const expectedOrderIdPrefix = `x-${getOrderIdPrefix(apiCategory)}`;
+    if (!params[orderIdProperty].startsWith(expectedOrderIdPrefix)) {
+      logInvalidOrderId(orderIdProperty, expectedOrderIdPrefix, params);
+    }
   }
 
   //TODO - https://binance-docs.github.io/apidocs/delivery/en/#get-income-history-user_data
